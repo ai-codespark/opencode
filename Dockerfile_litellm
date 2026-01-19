@@ -1,0 +1,47 @@
+FROM ubuntu:24.04
+
+LABEL maintainer="AI CodeSpark <support@ai-codespark.com>"
+LABEL description="OpenCode - AI-powered code intelligence platform running on Ubuntu"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    ca-certificates \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy the opencode-linux-x64 tarball
+ARG OPENCODE_VERSION
+COPY opencode-linux-x64.tar.gz /tmp/opencode-linux-x64.tar.gz
+
+# Extract and install OpenCode
+RUN mkdir -p /usr/local/opencode && \
+    tar -xzf /tmp/opencode-linux-x64.tar.gz -C /usr/local/opencode && \
+    rm /tmp/opencode-linux-x64.tar.gz && \
+    ln -s /usr/local/opencode/opencode /usr/local/bin/opencode && \
+    chmod +x /usr/local/opencode/opencode
+
+# Set environment variables
+ENV OPENCODE_VERSION=${OPENCODE_VERSION}
+ENV OPENCODE_CHANNEL=latest
+ENV PATH="/usr/local/opencode:${PATH}"
+
+# Create a non-root user for running OpenCode
+RUN useradd -m -s /bin/bash opencode && \
+    chown -R opencode:opencode /app
+
+USER opencode
+
+# Expose default port (if applicable)
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD opencode --version || exit 1
+
+# Default command
+CMD ["opencode", "start"]

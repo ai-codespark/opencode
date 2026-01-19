@@ -1,0 +1,255 @@
+name: ai-codespark-release
+
+on:
+  release:
+    types:
+      - created
+
+permissions:
+  id-token: write
+  contents: write
+  packages: write
+
+jobs:
+  build-cli-linux:
+    runs-on: ubuntu-latest
+    if: github.repository == 'ai-codespark/opencode'
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - run: git fetch --force --tags
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Set version
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "OPENCODE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "OPENCODE_CHANNEL=latest" >> $GITHUB_ENV
+
+      - name: Update package versions
+        run: |
+          find . -name "package.json" -not -path "*/node_modules/*" -not -path "*/dist/*" -exec sed -i 's/"version":[[:space:]]*"[^"]*"/"version": "'"$RELEASE_VERSION"'"/' {} \;
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build OpenCode CLI (linux-x64)
+        working-directory: packages/opencode
+        run: |
+          bun ./script/build.ts --single
+          cd dist/opencode-linux-x64/bin
+          tar -czf ../../../opencode-linux-x64.tar.gz *
+          cd ../../..
+          echo "Build completed, tarball created"
+          ls -lh opencode-linux-x64.tar.gz
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.AI_CODESPARK_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: packages/opencode/opencode-linux-x64.tar.gz
+          asset_name: opencode-linux-x64.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-cli-linux-x64
+          path: packages/opencode/opencode-linux-x64.tar.gz
+
+  build-cli-windows:
+    runs-on: windows-latest
+    if: github.repository == 'ai-codespark/opencode'
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - run: git fetch --force --tags
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Set version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "OPENCODE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "OPENCODE_CHANNEL=latest" >> $GITHUB_ENV
+
+      - name: Update package versions
+        shell: bash
+        run: |
+          find . -name "package.json" -not -path "*/node_modules/*" -not -path "*/dist/*" -exec sed -i 's/"version":[[:space:]]*"[^"]*"/"version": "'"$RELEASE_VERSION"'"/' {} \;
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build OpenCode CLI (windows-x64)
+        working-directory: packages/opencode
+        shell: bash
+        run: |
+          bun ./script/build.ts --single
+          cd dist/opencode-windows-x64/bin
+          7z a -tzip ../../../opencode-windows-x64.zip *
+          cd ../../..
+          echo "Build completed, zip created"
+          ls -lh opencode-windows-x64.zip
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.AI_CODESPARK_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: packages/opencode/opencode-windows-x64.zip
+          asset_name: opencode-windows-x64.zip
+          asset_content_type: application/zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-cli-windows-x64
+          path: packages/opencode/opencode-windows-x64.zip
+
+  build-desktop-windows:
+    runs-on: windows-latest
+    if: github.repository == 'ai-codespark/opencode'
+    needs: build-cli-windows
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - run: git fetch --force --tags
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "OPENCODE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "OPENCODE_CHANNEL=latest" >> $GITHUB_ENV
+
+      - name: Update package versions
+        shell: bash
+        run: |
+          find . -name "package.json" -not -path "*/node_modules/*" -not -path "*/dist/*" -exec sed -i 's/"version":[[:space:]]*"[^"]*"/"version": "'"$RELEASE_VERSION"'"/' {} \;
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: opencode-cli-windows-x64
+          path: packages/desktop/src-tauri/target/opencode-binaries
+
+      - name: Prepare CLI binary for desktop
+        working-directory: packages/desktop
+        shell: bash
+        run: |
+          mkdir -p src-tauri/sidecars
+          cd src-tauri/target/opencode-binaries
+          unzip opencode-windows-x64.zip -d extracted
+          cp extracted/opencode.exe ../../sidecars/opencode-cli-x86_64-pc-windows-msvc.exe
+          cd ../../..
+          ls -lh src-tauri/sidecars/
+
+      - name: Build desktop app
+        working-directory: packages/desktop
+        env:
+          RUSTFLAGS: "-A dead_code"
+        run: |
+          bun run build
+          bun tauri build --bundles nsis
+
+      - name: Find and rename NSIS installer
+        working-directory: packages/desktop/src-tauri/target/release/bundle/nsis
+        shell: bash
+        run: |
+          INSTALLER=$(ls *.exe | head -n 1)
+          if [ -f "$INSTALLER" ]; then
+            mv "$INSTALLER" "../../../../../opencode-desktop-windows-x64.exe"
+            echo "Renamed $INSTALLER to opencode-desktop-windows-x64.exe"
+          fi
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.AI_CODESPARK_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: packages/desktop/opencode-desktop-windows-x64.exe
+          asset_name: opencode-desktop-windows-x64.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-desktop-windows-x64
+          path: packages/desktop/opencode-desktop-windows-x64.exe
+
+  build-docker:
+    runs-on: ubuntu-latest
+    if: github.repository == 'ai-codespark/opencode'
+    needs: build-cli-linux
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - run: git fetch --force --tags
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.AI_CODESPARK_TOKEN }}
+
+      - name: Set version
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: opencode-cli-linux-x64
+          path: .
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile_litellm
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            OPENCODE_VERSION=${{ env.RELEASE_VERSION }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ env.RELEASE_VERSION }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

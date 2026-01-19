@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "litellm/ollama-kimi-k2",
+  "provider": {
+    "litellm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LiteLLM",
+      "options": {
+        "baseURL": "https://litellm.example.com",
+        "apiKey": "sk-1234"
+      },
+      "models": {
+        "ollama-kimi-k2": {
+          "name": "Ollama Kimi K2"
+        }
+      }
+    }
+  }
+}
