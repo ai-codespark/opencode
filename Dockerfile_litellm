@@ -7,6 +7,7 @@ LABEL description="OpenCode - AI-powered code intelligence platform running on U
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
+    git \
     ca-certificates \
     unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -35,6 +36,37 @@ RUN useradd -m -s /bin/bash opencode && \
     chown -R opencode:opencode /app
 
 USER opencode
+WORKDIR /home/opencode
+
+# Install Bun for opencode user
+RUN curl -fsSL https://bun.sh/install | bash
+
+# Set up environment variables
+ENV BUN_INSTALL="/home/opencode/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+ENV XDG_DATA_HOME="/home/opencode/.local/share"
+ENV XDG_CACHE_HOME="/home/opencode/.cache"
+ENV XDG_CONFIG_HOME="/home/opencode/.config"
+ENV XDG_STATE_HOME="/home/opencode/.local/state"
+
+# Pre-create opencode directories
+RUN mkdir -p \
+    ~/.local/share/opencode/bin \
+    ~/.local/share/opencode/log \
+    ~/.cache/opencode \
+    ~/.config/opencode \
+    ~/.local/state/opencode
+
+# Create a temporary workspace and run opencode to trigger dependency installation
+# This triggers Config.installDependencies() which installs @opencode-ai/plugin and other deps
+RUN mkdir -p /tmp/test-workspace && \
+    cd /tmp/test-workspace && \
+    git init && \
+    (echo "hello" | opencode "$PWD" > /tmp/opencode.log 2>&1 &) && \
+    OPENCODE_PID=$! && \
+    sleep 5 && \
+    kill $OPENCODE_PID 2>/dev/null || true && \
+    rm -rf /tmp/test-workspace
 
 # Expose default port (if applicable)
 EXPOSE 3000
